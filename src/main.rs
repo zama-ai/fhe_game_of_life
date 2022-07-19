@@ -1,5 +1,6 @@
 use concrete::prelude::*;
-use concrete::{generate_keys, set_server_key, ConfigBuilder, FheBool};
+use concrete::{generate_keys, set_server_key, ConfigBuilder, FheBool, ServerKey};
+use rayon::prelude::*;
 use std::ops::AddAssign;
 
 #[derive(Clone)]
@@ -45,32 +46,49 @@ struct Board {
     dimensions: (usize, usize),
     states: Vec<FheBool>,
     clean_accumulator: Accumulator,
+    serialized_server_key: Vec<u8>,
 }
 
 impl Board {
-    pub fn new(n_cols: usize, states: Vec<FheBool>, zeros: (FheBool, FheBool, FheBool)) -> Self {
+    pub fn new(
+        n_cols: usize,
+        states: Vec<FheBool>,
+        zeros: (FheBool, FheBool, FheBool),
+        server_key: ServerKey,
+    ) -> Self {
         let n_rows = states.len() / n_cols;
+        let serialized_server_key = bincode::serialize(&server_key).unwrap();
+
+        set_server_key(server_key);
 
         Self {
             dimensions: (n_rows, n_cols),
             states,
             clean_accumulator: Accumulator::from(zeros),
+            serialized_server_key,
         }
     }
 
     pub fn update(&mut self) {
-        let mut new_states = Vec::<FheBool>::with_capacity(self.states.len());
-
         let nx = self.dimensions.0;
         let ny = self.dimensions.1;
-        for i in 0..nx {
-            let im = if i == 0 { nx - 1 } else { i - 1 };
-            let ip = if i == nx - 1 { 0 } else { i + 1 };
-            for j in 0..ny {
+
+        // This builds an iterator that will return the pair of indices for (i, j)
+        // (0, 0), (0, 1) ...
+        let indices_iter = (0..nx)
+            .into_par_iter()
+            .flat_map(|i| (0..ny).into_par_iter().map(move |j| (i, j)));
+
+        let new_states: Vec<FheBool> = indices_iter
+            .map(|(i, j)| {
+                let server_key = bincode::deserialize(&self.serialized_server_key).unwrap();
+                set_server_key(server_key);
+
+                let im = if i == 0 { nx - 1 } else { i - 1 };
+                let ip = if i == nx - 1 { 0 } else { i + 1 };
                 let jm = if j == 0 { ny - 1 } else { j - 1 };
                 let jp = if j == ny - 1 { 0 } else { j + 1 };
 
-                // get the neighbours, with periodic boundary conditions
                 let n1 = &self.states[im * ny + jm];
                 let n2 = &self.states[im * ny + j];
                 let n3 = &self.states[im * ny + jp];
@@ -81,13 +99,13 @@ impl Board {
                 let n8 = &self.states[ip * ny + jp];
 
                 // see if the cell is alive of dead
-                new_states.push(is_alive(
+                is_alive(
                     &self.states[i * ny + j],
-                    &vec![n1, n2, n3, n4, n5, n6, n7, n8],
+                    &[n1, n2, n3, n4, n5, n6, n7, n8],
                     self.clean_accumulator.clone(),
-                ));
-            }
-        }
+                )
+            })
+            .collect();
 
         // update the board
         self.states = new_states;
@@ -127,9 +145,7 @@ fn main() {
         .map(|x| FheBool::encrypt(x, &client_key))
         .collect();
 
-    set_server_key(server_key);
-
-    let mut board = Board::new(n_cols, states, zeros);
+    let mut board = Board::new(n_cols, states, zeros, server_key);
 
     let mut count = 0;
     loop {
