@@ -1,6 +1,7 @@
 use concrete_boolean::ciphertext::Ciphertext;
 use concrete_boolean::gen_keys;
 use concrete_boolean::server_key::ServerKey;
+use rayon::prelude::*;
 
 // 3-bits accumulator
 // The value 8 is identified with 0.
@@ -115,18 +116,24 @@ impl Board {
     ///  server_key: the server key needed to perform homomorphic operations
     ///  zeros: three encryptions of false (which may be identical)
     pub fn update(&mut self, server_key: &ServerKey, zeros: &(Ciphertext, Ciphertext, Ciphertext)) {
-        let mut new_states = Vec::<Ciphertext>::new();
-
         let nx = self.dimensions.0;
         let ny = self.dimensions.1;
-        for i in 0..nx {
-            let im = if i == 0 { nx - 1 } else { i - 1 };
-            let ip = if i == nx - 1 { 0 } else { i + 1 };
-            for j in 0..ny {
+
+        // This builds an iterator that will return the pair of indices for (i, j)
+        // (0, 0), (0, 1) ...
+        let indices_iter = (0..nx)
+            .into_par_iter()
+            .flat_map(|i| (0..ny).into_par_iter().map(move |j| (i, j)));
+
+        let serialized_server_key = bincode::serialize(server_key).unwrap();
+
+        let new_states = indices_iter
+            .map(|(i, j)| {
+                let im = if i == 0 { nx - 1 } else { i - 1 };
+                let ip = if i == nx - 1 { 0 } else { i + 1 };
                 let jm = if j == 0 { ny - 1 } else { j - 1 };
                 let jp = if j == ny - 1 { 0 } else { j + 1 };
 
-                // get the neighbours, with periodic boundary conditions
                 let n1 = &self.states[im * ny + jm];
                 let n2 = &self.states[im * ny + j];
                 let n3 = &self.states[im * ny + jp];
@@ -136,15 +143,17 @@ impl Board {
                 let n7 = &self.states[ip * ny + j];
                 let n8 = &self.states[ip * ny + jp];
 
+                let server_key = bincode::deserialize(&serialized_server_key).unwrap();
+
                 // see if the cell is alive of dead
-                new_states.push(is_alive(
-                    server_key,
+                is_alive(
+                    &server_key,
                     &self.states[i * ny + j],
-                    &vec![n1, n2, n3, n4, n5, n6, n7, n8],
+                    &[n1, n2, n3, n4, n5, n6, n7, n8],
                     zeros,
-                ));
-            }
-        }
+                )
+            })
+            .collect();
 
         // update the board
         self.states = new_states;

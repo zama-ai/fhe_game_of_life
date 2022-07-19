@@ -7,6 +7,8 @@ edition = "2021"
 
 [dependencies]
 concrete-boolean = "0.1.0"
+rayon = "1.5.3"
+bincode = "1.3.3"
 
 [profile.release]
 lto = "fat"
