@@ -27,28 +27,12 @@ fn add_1(
     (c1, c2, c3)
 }
 
-// sum a sequence of ciphertexts, with the value 8 identified with 0
-// This function panics if `elements` is empty.
 fn sum(
     server_key: &ServerKey,
     elements: &[&Ciphertext],
-    zeros: &(Ciphertext, Ciphertext, Ciphertext),
+    zeros: (Ciphertext, Ciphertext, Ciphertext),
 ) -> (Ciphertext, Ciphertext, Ciphertext) {
-    let mut result = add_1(server_key, elements[0], zeros);
-    for i in 1..elements.len() {
-        result = add_1(server_key, elements[i], &result);
-    }
-    result
-}
-
-// sum a sequence of ciphertexts, with the value 8 identified with 0
-// This function panics if `elements` is empty.
-fn sum_no_panic(
-    server_key: &ServerKey,
-    elements: &[&Ciphertext],
-    zeros: &(Ciphertext, Ciphertext, Ciphertext),
-) -> (Ciphertext, Ciphertext, Ciphertext) {
-    let mut result = zeros.clone();
+    let mut result = zeros;
     for i in 0..elements.len() {
         result = add_1(server_key, elements[i], &result);
     }
@@ -62,7 +46,7 @@ fn is_alive(
     zeros: &(Ciphertext, Ciphertext, Ciphertext),
 ) -> Ciphertext {
     // perform the sum
-    let sum_neighbours = sum(server_key, neighbours, zeros);
+    let sum_neighbours = sum(server_key, neighbours, zeros.clone());
 
     // check if the sum is equal to 2 or 3
     let sum_is_2_or_3 = server_key.and(&sum_neighbours.1, &server_key.not(&sum_neighbours.2));
@@ -161,9 +145,8 @@ fn main() {
     // generate the client and server keys
     let (client_key, server_key) = gen_keys();
 
-    // compute three encryptions of 0
-    // (we could also work with only one; but this is quite fqst inprqctice)
-    // TODO: ability to create trivial ciphertext may be interesting
+    // compute three encryption of 0
+    // (we could also work with only one; but this is quite fast in practice)
     let zeros = (
         client_key.encrypt(false),
         client_key.encrypt(false),
@@ -171,10 +154,14 @@ fn main() {
     );
 
     // initial configuration
+    #[rustfmt::skip]
     let states = vec![
-        true, false, false, false, false, false, false, true, true, false, false, false, true,
-        true, false, false, false, false, false, false, false, false, false, false, false, false,
-        false, false, false, false, false, false, false, false, false, false,
+        true, false, false, false, false, false,
+        false, true, true, false, false, false,
+        true, true, false, false, false, false,
+        false, false, false, false, false, false,
+        false, false, false, false, false, false,
+        false, false, false, false, false, false,
     ];
 
     // encrypt the initial configuration
@@ -185,7 +172,7 @@ fn main() {
 
     let mut count = 0;
     loop {
-        println!("iter: {}", count);
+        print!("iter: {}", count);
         // show the board
         for i in 0..n_rows {
             println!();
@@ -197,6 +184,7 @@ fn main() {
                 }
             }
         }
+        println!();
 
         // increase the time step
         board.update(&server_key, &zeros);
