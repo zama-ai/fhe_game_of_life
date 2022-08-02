@@ -15,13 +15,15 @@ impl AddAssign<&FheBool> for Accumulator {
     // ^ -> xor
     // & -> and
     fn add_assign(&mut self, rhs: &FheBool) {
+        let c1 =  &self.0 ^ rhs; 
         let first_carry = rhs & &self.0;
-        self.0 = &self.0 ^ rhs;
 
-        let second_cary = &first_carry & &self.1;
-        self.1 = &self.1 ^ first_carry;
+        let second_carry = &first_carry & &self.1;
+        let c2 = &self.1 ^ first_carry;
 
-        self.2 = &self.2 ^ second_cary;
+        self.2 = &self.2 ^ second_carry;
+        self.1 = c2;
+        self.0 = c1;
     }
 }
 
