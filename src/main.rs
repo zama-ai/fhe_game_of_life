@@ -1,6 +1,6 @@
 use concrete::prelude::*;
 use concrete::{
-    set_server_key,ConfigBuilder, FheUint3, KeyCacher,
+    set_server_key,ConfigBuilder, FheUint2, KeyCacher,
 };
 
 const KEY_PATH: &str = "keys.bin";
@@ -9,25 +9,25 @@ const KEY_PATH: &str = "keys.bin";
 ///
 /// a live cell will survive if it has 2 or 3 neighbours alive
 /// a dead cell will birth if it has 3 neighbours alive
-fn is_alive(cell: &FheUint3, neighbours: &[&FheUint3]) -> FheUint3 {
-    let mut num_neighbours_alive = FheUint3::try_encrypt_trivial(0).unwrap();
+fn is_alive(cell: &FheUint2, neighbours: &[&FheUint2]) -> FheUint2 {
+    let mut num_neighbours_alive = FheUint2::try_encrypt_trivial(0).unwrap();
     for n in neighbours {
         num_neighbours_alive += *n;
     }
     // The above could be written as:
-    // let num_neighbours_alive: FheUint3 = neighbours.into_iter().copied().sum();
+    // let num_neighbours_alive: FheUint2 = neighbours.into_iter().copied().sum();
 
     num_neighbours_alive.eq(3) | (cell & num_neighbours_alive.eq(2))
 }
 
 struct Board {
     dimensions: (usize, usize),
-    states: Vec<FheUint3>,
-    new_states: Vec<FheUint3>,
+    states: Vec<FheUint2>,
+    new_states: Vec<FheUint2>,
 }
 
 impl Board {
-    pub fn new(n_cols: usize, states: Vec<FheUint3>) -> Self {
+    pub fn new(n_cols: usize, states: Vec<FheUint2>) -> Self {
         let n_rows = states.len() / n_cols;
         let n_elem = states.len();
 
@@ -80,7 +80,7 @@ fn main() {
     let (n_rows, n_cols): (usize, usize) = (6, 6);
 
     let keygen_start = Instant::now();
-    let config = ConfigBuilder::all_disabled().enable_default_uint3().build();
+    let config = ConfigBuilder::all_disabled().enable_default_uint2().build();
     let (client_key, server_key) = KeyCacher::new(
         KEY_PATH,
         config,
@@ -104,7 +104,7 @@ fn main() {
     // encrypt the initial configuration
     let states: Vec<_> = states
         .into_iter()
-        .map(|x| FheUint3::try_encrypt(x, &client_key).unwrap())
+        .map(|x| FheUint2::try_encrypt(x, &client_key).unwrap())
         .collect();
 
     set_server_key(server_key);
