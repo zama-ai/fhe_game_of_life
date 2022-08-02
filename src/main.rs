@@ -143,7 +143,9 @@ fn main() {
     let (n_rows, n_cols): (usize, usize) = (6, 6);
 
     // generate the client and server keys
+    let keygen_start = Instant::now();
     let (client_key, server_key) = gen_keys();
+    println!("Key Generation time: {:.3?}", keygen_start.elapsed());
 
     // compute three encryption of 0
     // (we could also work with only one; but this is quite fast in practice)
@@ -187,7 +189,9 @@ fn main() {
         println!();
 
         // increase the time step
+        let update_start = Instant::now();
         board.update(&server_key, &zeros);
+        println!("Time to update: {:.3?}", update_start.elapsed());
         count += 1;
         if count == 5 {
             break;
