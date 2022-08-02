@@ -99,12 +99,14 @@ impl Board {
 fn main() {
     use std::time::Instant;
     let before = Instant::now();
-
     let (n_rows, n_cols): (usize, usize) = (6, 6);
+
 
     let config = ConfigBuilder::all_disabled().enable_default_bool().build();
 
+    let keygen_start = Instant::now();
     let (client_key, server_key) = generate_keys(config);
+    println!("Key Generation time: {:.3?}", keygen_start.elapsed());
 
     let zeros = (
         FheBool::encrypt(false, &client_key),
@@ -150,7 +152,9 @@ fn main() {
         println!();
 
         // increase the time step
+        let update_start = Instant::now();
         board.update();
+        println!("Time to update: {:.3?}", update_start.elapsed());
         count += 1;
         if count == 5 {
             break;
