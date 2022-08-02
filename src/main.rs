@@ -79,6 +79,7 @@ fn main() {
 
     let (n_rows, n_cols): (usize, usize) = (6, 6);
 
+    let keygen_start = Instant::now();
     let config = ConfigBuilder::all_disabled().enable_default_uint3().build();
     let (client_key, server_key) = KeyCacher::new(
         KEY_PATH,
@@ -87,6 +88,7 @@ fn main() {
         bincode::deserialize_from,
     )
     .get();
+    println!("Key Generation time {:.3?}", keygen_start.elapsed());
 
     // initial configuration
     #[rustfmt::skip]
@@ -126,12 +128,15 @@ fn main() {
         println!();
 
         // increase the time step
+        let update_start = Instant::now();
         board.update();
+        println!("Time to update: {:.3?}", update_start.elapsed());
+
         count += 1;
         if count == 5 {
             break;
         }
     }
 
-    println!("Elapsed time: {:.2?}", before.elapsed());
+    println!("Elapsed time: {:.3?}", before.elapsed());
 }
