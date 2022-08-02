@@ -50,8 +50,9 @@ dependencies = [
 
 [[package]]
 name = "concrete"
-version = "0.2.0-beta.1"
-source = "git+https://github.com/zama-ai/concrete?branch=scalar_eq#53a5513d605033e1979174c4350728a5871b5b96"
+version = "0.2.0-beta.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1c5d6adb4ca040f725babc6a26e30148913f36478419fbce9934df45080a41a"
 dependencies = [
  "concrete-shortint",
  "serde",
@@ -117,7 +118,8 @@ dependencies = [
 [[package]]
 name = "concrete-shortint"
 version = "0.1.0-beta.0"
-source = "git+https://github.com/zama-ai/concrete?branch=scalar_eq#53a5513d605033e1979174c4350728a5871b5b96"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7021df64c151f41f3ed74e9d1fa4c0078dd337eff83dbf9e0f9ad22e3c8b508e"
 dependencies = [
  "concrete-core-experimental",
  "serde",
