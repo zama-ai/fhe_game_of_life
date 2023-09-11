@@ -1,7 +1,5 @@
-use concrete::prelude::*;
-use concrete::{
-    set_server_key,ConfigBuilder, FheUint2, KeyCacher,
-};
+use tfhe::prelude::*;
+use tfhe::{generate_keys, set_server_key, ConfigBuilder, FheUint2};
 
 const KEY_PATH: &str = "keys.bin";
 
@@ -81,13 +79,7 @@ fn main() {
 
     let keygen_start = Instant::now();
     let config = ConfigBuilder::all_disabled().enable_default_uint2().build();
-    let (client_key, server_key) = KeyCacher::new(
-        KEY_PATH,
-        config,
-        bincode::serialize_into,
-        bincode::deserialize_from,
-    )
-    .get();
+    let (client_key, server_key) = generate_keys(config);
     println!("Key Generation time {:.3?}", keygen_start.elapsed());
 
     // initial configuration
