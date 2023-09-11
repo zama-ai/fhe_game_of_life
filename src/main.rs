@@ -1,6 +1,6 @@
-use concrete::prelude::*;
-use concrete::{generate_keys, set_server_key, ConfigBuilder, FheBool};
 use std::ops::AddAssign;
+use tfhe::prelude::*;
+use tfhe::{generate_keys, set_server_key, ConfigBuilder, FheBool};
 
 #[derive(Clone)]
 struct Accumulator(FheBool, FheBool, FheBool);
@@ -15,7 +15,7 @@ impl AddAssign<&FheBool> for Accumulator {
     // ^ -> xor
     // & -> and
     fn add_assign(&mut self, rhs: &FheBool) {
-        let c1 =  &self.0 ^ rhs; 
+        let c1 = &self.0 ^ rhs;
         let first_carry = rhs & &self.0;
 
         let second_carry = &first_carry & &self.1;
@@ -101,7 +101,6 @@ fn main() {
     let before = Instant::now();
     let (n_rows, n_cols): (usize, usize) = (6, 6);
 
-
     let config = ConfigBuilder::all_disabled().enable_default_bool().build();
 
     let keygen_start = Instant::now();
@@ -167,8 +166,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use crate::Accumulator;
-    use concrete::prelude::*;
-    use concrete::{generate_keys, ConfigBuilder, FheBool};
+    use tfhe::prelude::*;
+    use tfhe::{generate_keys, ConfigBuilder, FheBool};
 
     fn decrypt_acc(acc: &Accumulator, keys: &mut KeyChain) -> (FheBool, FheBool, FheBool) {
         (
