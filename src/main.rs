@@ -1,3 +1,4 @@
+use rand::Rng;
 use tfhe::prelude::*;
 use tfhe::{generate_keys, set_server_key, ConfigBuilder, FheUint2};
 
@@ -10,17 +11,22 @@ use rayon::prelude::*;
 /// a live cell will survive if it has 2 or 3 neighbours alive
 /// a dead cell will birth if it has 3 neighbours alive
 fn is_alive(cell: &FheUint2, neighbours: &[&FheUint2]) -> FheUint2 {
-    let mut num_neighbours_alive = FheUint2::try_encrypt_trivial(0).unwrap();
-    for n in neighbours {
-        num_neighbours_alive += *n;
-    }
+    // let mut num_neighbours_alive = FheUint2::try_encrypt_trivial(0).unwrap();
+    // for n in neighbours {
+    //     num_neighbours_alive += *n;
+    // }
     // The above could be written as:
-    // let num_neighbours_alive: FheUint2 = neighbours.into_iter().copied().sum();
+    let num_neighbours_alive: FheUint2 = neighbours.into_iter().copied().sum();
 
-
-    num_neighbours_alive.bivariate_function(cell, |n, c| {
+     num_neighbours_alive.bivariate_function(cell, |n, c| {
         u8::from((n == 3) || (c == 1 && (n == 2)))
     })
+
+    // let lut = num_neighbours_alive.generate_bivariate_lookup_table(|n, c| {
+    //     u8::from((n == 3) || (c == 1 && (n == 2)))
+    // });
+
+    // lut.get(&num_neighbours_alive, &cell)
     // num_neighbours_alive.eq(3) | (cell & num_neighbours_alive.eq(2))
 }
 
@@ -28,6 +34,8 @@ struct Board {
     dimensions: (usize, usize),
     states: Vec<FheUint2>,
     new_states: Vec<FheUint2>,
+    // Indices used for task parallelism
+    indices: Vec<(usize, usize)>,
 }
 
 impl Board {
@@ -39,6 +47,7 @@ impl Board {
             dimensions: (n_rows, n_cols),
             states,
             new_states: Vec::with_capacity(n_elem),
+            indices: itertools::iproduct!(0..n_rows, 0..n_cols).collect::<Vec<_>>(),
         }
     }
 
@@ -48,17 +57,10 @@ impl Board {
         let nx = self.dimensions.0;
         let ny = self.dimensions.1;
 
-        // (0..nx).into_par_iter().map(|i| {
-        //     (0..ny).into_iter()
-        //         .map()
-        // })
-
-        let jobs = itertools::iproduct!(0..nx, 0..ny).collect::<Vec<_>>();
-
-        let l = jobs.len();
-        let lol = jobs.into_par_iter()
-            .zip(rayon::iter::repeatn(self.states.clone(), l))
-            .map(|((i, j), states)| {
+        self.indices.par_iter()
+            .copied()
+            // .zip(rayon::iter::repeatn(self.states.clone(), l))
+            .map(|(i, j)| {
 
                 let im = if i == 0 { nx - 1 } else { i - 1 };
                 let ip = if i == nx - 1 { 0 } else { i + 1 };
@@ -67,27 +69,30 @@ impl Board {
                 let jp = if j == ny - 1 { 0 } else { j + 1 };
 
                 // get the neighbours, with periodic boundary conditions
-                let n1 = &states[im * ny + jm];
-                let n2 = &states[im * ny + j];
-                let n3 = &states[im * ny + jp];
-                let n4 = &states[i * ny + jm];
-                let n5 = &states[i * ny + jp];
-                let n6 = &states[ip * ny + jm];
-                let n7 = &states[ip * ny + j];
-                let n8 = &states[ip * ny + jp];
+                let n1 = &self.states[im * ny + jm];
+                let n2 = &self.states[im * ny + j];
+                let n3 = &self.states[im * ny + jp];
+                let n4 = &self.states[i * ny + jm];
+                let n5 = &self.states[i * ny + jp];
+                let n6 = &self.states[ip * ny + jm];
+                let n7 = &self.states[ip * ny + j];
+                let n8 = &self.states[ip * ny + jp];
 
                 // see if the cell is alive of dead
                 is_alive(
-                    &states[i * ny + j],
+                    &self.states[i * ny + j],
                     &[n1, n2, n3, n4, n5, n6, n7, n8],
                 )
-        }).collect::<Vec<_>>();
-        self.new_states = lol;
+        }).collect_into_vec(&mut self.new_states);
 
-        // for i in 0..nx {
-        //     let im = if i == 0 { nx - 1 } else { i - 1 };
-        //     let ip = if i == nx - 1 { 0 } else { i + 1 };
-        //     for j in 0..ny {
+        // self.new_states = self.indices.iter()
+        //     .copied()
+        //     // .zip(rayon::iter::repeatn(self.states.clone(), l))
+        //     .map(|(i, j)| {
+        //
+        //         let im = if i == 0 { nx - 1 } else { i - 1 };
+        //         let ip = if i == nx - 1 { 0 } else { i + 1 };
+        //
         //         let jm = if j == 0 { ny - 1 } else { j - 1 };
         //         let jp = if j == ny - 1 { 0 } else { j + 1 };
         //
@@ -102,12 +107,11 @@ impl Board {
         //         let n8 = &self.states[ip * ny + jp];
         //
         //         // see if the cell is alive of dead
-        //         self.new_states.push(is_alive(
+        //         is_alive(
         //             &self.states[i * ny + j],
         //             &[n1, n2, n3, n4, n5, n6, n7, n8],
-        //         ));
-        //     }
-        // }
+        //         )
+        //     }).collect();
 
         // update the board
         std::mem::swap(&mut self.new_states, &mut self.states);
@@ -118,7 +122,7 @@ fn main() {
     use std::time::Instant;
     let before = Instant::now();
 
-    let (n_rows, n_cols): (usize, usize) = (6, 6);
+    let (n_rows, n_cols): (usize, usize) = (20, 20);
 
     let keygen_start = Instant::now();
     let config = ConfigBuilder::all_disabled().enable_default_uint2().build();
@@ -136,9 +140,16 @@ fn main() {
         0, 0, 0, 0, 0, 0,
     ];
 
+    let mut states = vec![0; n_rows * n_cols];
+    let mut rng = rand::thread_rng();
+    for s in &mut states {
+        *s = rng.gen_range(0..=1);
+    }
+
     // encrypt the initial configuration
     let states: Vec<_> = states
         .into_iter()
+        .take(n_rows * n_rows)
         .map(|x| FheUint2::try_encrypt(x, &client_key).unwrap())
         .collect();
 
