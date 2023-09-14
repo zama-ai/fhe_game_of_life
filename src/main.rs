@@ -1,9 +1,4 @@
-use std::io::empty;
 use rand::Rng;
-use tfhe::prelude::*;
-use tfhe::{generate_keys, set_server_key, ConfigBuilder, FheUint2};
-
-const KEY_PATH: &str = "keys.bin";
 
 use rayon::prelude::*;
 use tfhe::shortint::{CarryModulus, MessageModulus};
@@ -42,36 +37,44 @@ fn is_alive_4b(sks: &tfhe::shortint::ServerKey, cell: &tfhe::shortint::Ciphertex
         sks.unchecked_add_assign(&mut num_neighbours_alive, n);
     }
 
-    let lut1 = sks.generate_lookup_table(|x| {
-        if x == 2 || x == 3 {
-            x - 1
-        } else {
-            0
-        }
-    });
+    {
+        let factor = 4;
+        let lut1 = sks.generate_lookup_table(|x| {
+            if x == 2 || x == 3 {
+                x * factor
+            } else {
+                0
+            }
+        });
 
-    sks.apply_lookup_table_assign(&mut num_neighbours_alive, &lut1);
-    sks.unchecked_add_assign(&mut num_neighbours_alive, cell);
+        sks.apply_lookup_table_assign(&mut num_neighbours_alive, &lut1);
+        sks.unchecked_add_assign(&mut num_neighbours_alive, cell);
 
-    let lut2 = sks.generate_lookup_table(|x| {
-        // If x is 3, x was 2 prior to adding the cell value (sum of neigbours was 3)
-        // then either:
-        //  cell was 1: we are in the case where cell is alive with 2 neighbours so it continues
-        //  cell was 0: we are in the case where original the sum of neighbours was 3, to the cell lives regardless
-        // If x is 2, x was 1 prior to adding the cell value (sum of neighoburs was 2)
-        // then either:
-        //  cell was 1: we are in the case where cell is alive with 2 neighbours so it continues
-        //  cell was 0: we are in the case where original the sum of neighbours was 3, to the cell lives regardless
-        if x == 2 || x == 3 {
-            1
-        } else {
-            0
-        }
-    });
+        let lut2 = sks.generate_lookup_table(|x| {
+            let num_neighbours = x / factor;
+            let cell = x % factor;
 
-    sks.apply_lookup_table_assign(&mut num_neighbours_alive, &lut2);
+            u64::from((num_neighbours == 3) || ((cell == 1) && (num_neighbours == 2)))
+        });
 
-    num_neighbours_alive
+        sks.apply_lookup_table_assign(&mut num_neighbours_alive, &lut2);
+
+        num_neighbours_alive
+    }
+
+
+    // {
+    //     let factor = 4;
+    //     let shifted_cell = sks.scalar_mul(cell, factor);
+    //     sks.unchecked_add_assign(&mut num_neighbours_alive, &shifted_cell);
+    //
+    //     let lut1 = sks.generate_lookup_table(|x| {
+    //     let cell = x / factor as u64;
+    //     let num_n = x % factor as u64;
+    //     u64::from(num_n == 3 || ((cell == 1) && num_n == 2))
+    //     });
+    //     sks.apply_lookup_table(&num_neighbours_alive, &lut1)
+    // }
 }
 
 fn is_alive_5b(sks: &tfhe::shortint::ServerKey, cell: &tfhe::shortint::Ciphertext, neighbours: &[&tfhe::shortint::Ciphertext]) -> tfhe::shortint::Ciphertext {
@@ -190,25 +193,33 @@ fn main() {
     use std::time::Instant;
     let before = Instant::now();
 
-    let (n_rows, n_cols): (usize, usize) = (20, 20);
+    let (n_rows, n_cols): (usize, usize) = (6, 6);
 
     let keygen_start = Instant::now();
     // let param = tfhe::shortint::parameters::PARAM_MESSAGE_4_CARRY_0_KS_PBS;
-    // let param = tfhe::shortint::parameters::PARAM_MESSAGE_1_CARRY_3_KS_PBS;
+    let param = tfhe::shortint::parameters::PARAM_MESSAGE_1_CARRY_3_KS_PBS;
     // let param = tfhe::shortint::parameters::PARAM_MESSAGE_1_CARRY_4_KS_PBS;
     // let param = tfhe::shortint::parameters::PARAM_MESSAGE_5_CARRY_0_KS_PBS;
-    let param = tfhe::shortint::parameters::PARAM_MESSAGE_4_CARRY_1_KS_PBS;
+    // let param = tfhe::shortint::parameters::PARAM_MESSAGE_4_CARRY_1_KS_PBS;
     let (cks, sks) = tfhe::shortint::gen_keys(param);
     println!("Key Generation time {:.3?}", keygen_start.elapsed());
 
     let states = if (n_rows, n_cols) == (6, 6) {
         // initial configuration
         #[rustfmt::skip]
-            let states = vec![
+        let states = vec![
             1, 0, 0, 0, 0, 0,
             0, 1, 1, 0, 0, 0,
             1, 1, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0,
+        ];
+        let states = vec![
+            0, 0, 0, 0, 0, 0,
+            0, 1, 1, 1, 0, 0,
+            0, 1, 0, 1, 0, 0,
+            0, 0, 1, 1, 0, 0,
             0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0,
         ];
