@@ -1,3 +1,4 @@
+use std::io::empty;
 use rand::Rng;
 use tfhe::prelude::*;
 use tfhe::{generate_keys, set_server_key, ConfigBuilder, FheUint2};
@@ -5,41 +6,105 @@ use tfhe::{generate_keys, set_server_key, ConfigBuilder, FheUint2};
 const KEY_PATH: &str = "keys.bin";
 
 use rayon::prelude::*;
+use tfhe::shortint::{CarryModulus, MessageModulus};
+
+fn is_alive(sks: &tfhe::shortint::ServerKey, cell: &tfhe::shortint::Ciphertext, neighbours: &[&tfhe::shortint::Ciphertext]) -> tfhe::shortint::Ciphertext {
+    match (sks.message_modulus, sks.carry_modulus) {
+        (MessageModulus(16), CarryModulus(1)) => {
+            is_alive_4b(sks, cell, neighbours)
+        }
+        (MessageModulus(2), CarryModulus(8)) => {
+            is_alive_4b(sks, cell, neighbours)
+        }
+        (MessageModulus(2), CarryModulus(16)) => {
+            is_alive_5b(sks, cell, neighbours)
+        }
+        (MessageModulus(16), CarryModulus(2)) => {
+            is_alive_5b(sks, cell, neighbours)
+        }
+        (MessageModulus(32), CarryModulus(1)) => {
+            is_alive_5b(sks, cell, neighbours)
+        }
+        _ => {
+            panic!("not supported")
+        }
+    }
+}
+
 
 /// Rules are
 ///
 /// a live cell will survive if it has 2 or 3 neighbours alive
 /// a dead cell will birth if it has 3 neighbours alive
-fn is_alive(cell: &FheUint2, neighbours: &[&FheUint2]) -> FheUint2 {
-    // let mut num_neighbours_alive = FheUint2::try_encrypt_trivial(0).unwrap();
-    // for n in neighbours {
-    //     num_neighbours_alive += *n;
-    // }
-    // The above could be written as:
-    let num_neighbours_alive: FheUint2 = neighbours.into_iter().copied().sum();
+fn is_alive_4b(sks: &tfhe::shortint::ServerKey, cell: &tfhe::shortint::Ciphertext, neighbours: &[&tfhe::shortint::Ciphertext]) -> tfhe::shortint::Ciphertext {
+    let mut num_neighbours_alive = neighbours[0].clone();
+    for n in neighbours[1..].iter() {
+        sks.unchecked_add_assign(&mut num_neighbours_alive, n);
+    }
 
-     num_neighbours_alive.bivariate_function(cell, |n, c| {
-        u8::from((n == 3) || (c == 1 && (n == 2)))
-    })
+    let lut1 = sks.generate_lookup_table(|x| {
+        if x == 2 || x == 3 {
+            x - 1
+        } else {
+            0
+        }
+    });
 
-    // let lut = num_neighbours_alive.generate_bivariate_lookup_table(|n, c| {
-    //     u8::from((n == 3) || (c == 1 && (n == 2)))
-    // });
+    sks.apply_lookup_table_assign(&mut num_neighbours_alive, &lut1);
+    sks.unchecked_add_assign(&mut num_neighbours_alive, cell);
 
-    // lut.get(&num_neighbours_alive, &cell)
-    // num_neighbours_alive.eq(3) | (cell & num_neighbours_alive.eq(2))
+    let lut2 = sks.generate_lookup_table(|x| {
+        // If x is 3, x was 2 prior to adding the cell value (sum of neigbours was 3)
+        // then either:
+        //  cell was 1: we are in the case where cell is alive with 2 neighbours so it continues
+        //  cell was 0: we are in the case where original the sum of neighbours was 3, to the cell lives regardless
+        // If x is 2, x was 1 prior to adding the cell value (sum of neighoburs was 2)
+        // then either:
+        //  cell was 1: we are in the case where cell is alive with 2 neighbours so it continues
+        //  cell was 0: we are in the case where original the sum of neighbours was 3, to the cell lives regardless
+        if x == 2 || x == 3 {
+            1
+        } else {
+            0
+        }
+    });
+
+    sks.apply_lookup_table_assign(&mut num_neighbours_alive, &lut2);
+
+    num_neighbours_alive
 }
+
+fn is_alive_5b(sks: &tfhe::shortint::ServerKey, cell: &tfhe::shortint::Ciphertext, neighbours: &[&tfhe::shortint::Ciphertext]) -> tfhe::shortint::Ciphertext {
+    assert!(sks.message_modulus.0 * sks.carry_modulus.0 >= 32);
+    let mut num_neighbours_alive = neighbours[0].clone();
+    for n in neighbours[1..].iter() {
+        sks.unchecked_add_assign(&mut num_neighbours_alive, n);
+    }
+
+    let factor = 16;
+    let shifted_cell = sks.scalar_mul(cell, factor);
+    sks.unchecked_add_assign(&mut num_neighbours_alive, &shifted_cell);
+
+    let lut1 = sks.generate_lookup_table(|x| {
+        let cell = x / factor as u64;
+        let num_n = x % factor as u64;
+        u64::from(num_n == 3 || ((cell == 1) && num_n == 2))
+    });
+    sks.apply_lookup_table(&num_neighbours_alive, &lut1)
+}
+
 
 struct Board {
     dimensions: (usize, usize),
-    states: Vec<FheUint2>,
-    new_states: Vec<FheUint2>,
+    states: Vec<tfhe::shortint::Ciphertext>,
+    new_states: Vec<tfhe::shortint::Ciphertext>,
     // Indices used for task parallelism
     indices: Vec<(usize, usize)>,
+    sks: tfhe::shortint::ServerKey,
 }
 
 impl Board {
-    pub fn new(n_cols: usize, states: Vec<FheUint2>) -> Self {
+    pub fn new(n_cols: usize, states: Vec<tfhe::shortint::Ciphertext>, sks: tfhe::shortint::ServerKey) -> Self {
         let n_rows = states.len() / n_cols;
         let n_elem = states.len();
 
@@ -48,6 +113,7 @@ impl Board {
             states,
             new_states: Vec::with_capacity(n_elem),
             indices: itertools::iproduct!(0..n_rows, 0..n_cols).collect::<Vec<_>>(),
+            sks,
         }
     }
 
@@ -80,6 +146,7 @@ impl Board {
 
                 // see if the cell is alive of dead
                 is_alive(
+                    &self.sks,
                     &self.states[i * ny + j],
                     &[n1, n2, n3, n4, n5, n6, n7, n8],
                 )
@@ -108,6 +175,7 @@ impl Board {
         //
         //         // see if the cell is alive of dead
         //         is_alive(
+        //             &self.sks,
         //             &self.states[i * ny + j],
         //             &[n1, n2, n3, n4, n5, n6, n7, n8],
         //         )
@@ -125,38 +193,43 @@ fn main() {
     let (n_rows, n_cols): (usize, usize) = (20, 20);
 
     let keygen_start = Instant::now();
-    let config = ConfigBuilder::all_disabled().enable_default_uint2().build();
-    let (client_key, server_key) = generate_keys(config);
+    // let param = tfhe::shortint::parameters::PARAM_MESSAGE_4_CARRY_0_KS_PBS;
+    // let param = tfhe::shortint::parameters::PARAM_MESSAGE_1_CARRY_3_KS_PBS;
+    // let param = tfhe::shortint::parameters::PARAM_MESSAGE_1_CARRY_4_KS_PBS;
+    // let param = tfhe::shortint::parameters::PARAM_MESSAGE_5_CARRY_0_KS_PBS;
+    let param = tfhe::shortint::parameters::PARAM_MESSAGE_4_CARRY_1_KS_PBS;
+    let (cks, sks) = tfhe::shortint::gen_keys(param);
     println!("Key Generation time {:.3?}", keygen_start.elapsed());
 
-    // initial configuration
-    #[rustfmt::skip]
-    let states = vec![
-        1, 0, 0, 0, 0, 0,
-        0, 1, 1, 0, 0, 0,
-        1, 1, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0,
-    ];
-
-    let mut states = vec![0; n_rows * n_cols];
-    let mut rng = rand::thread_rng();
-    for s in &mut states {
-        *s = rng.gen_range(0..=1);
-    }
+    let states = if (n_rows, n_cols) == (6, 6) {
+        // initial configuration
+        #[rustfmt::skip]
+            let states = vec![
+            1, 0, 0, 0, 0, 0,
+            0, 1, 1, 0, 0, 0,
+            1, 1, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0,
+        ];
+        states
+    } else {
+        let mut states = vec![0; n_rows * n_cols];
+        let mut rng = rand::thread_rng();
+        for s in &mut states {
+            *s = rng.gen_range(0..=1);
+        }
+        states
+    };
 
     // encrypt the initial configuration
     let states: Vec<_> = states
         .into_iter()
         .take(n_rows * n_rows)
-        .map(|x| FheUint2::try_encrypt(x, &client_key).unwrap())
+        .map(|x| cks.encrypt(x))
         .collect();
 
-    set_server_key(server_key.clone());
-    rayon::broadcast(|_| set_server_key(server_key.clone()));
-
-    let mut board = Board::new(n_cols, states);
+    let mut board = Board::new(n_cols, states, sks);
 
     let mut count = 0;
     loop {
@@ -165,7 +238,7 @@ fn main() {
         for i in 0..n_rows {
             println!();
             for j in 0..n_rows {
-                if (&board.states[i * n_cols + j]).decrypt(&client_key) != 0 {
+                if cks.decrypt(&board.states[i * n_cols + j]) != 0 {
                     print!("█");
                 } else {
                     print!("░");
